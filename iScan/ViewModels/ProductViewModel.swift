@@ -19,7 +19,7 @@ class ProductViewModel: ObservableObject {
         }
     }
     
-    private let baseURL = "https://iscan.store/products/"
+    private let baseURL = "https://iscan.store/api/v1/products/"
     private var isProcessingBarcode = false
     private let decoder = JSONDecoder()
     private let encoder = JSONEncoder()
@@ -57,6 +57,8 @@ class ProductViewModel: ObservableObject {
         guard !isProcessingBarcode else { return }
         isProcessingBarcode = true
         
+        print("Fetching product with barcode: \(barcode)")
+        
         await MainActor.run {
             self.isLoading = true
             self.error = nil
@@ -80,20 +82,34 @@ class ProductViewModel: ObservableObject {
                 return
             }
             
+            print("Server response status code: \(httpResponse.statusCode)")
+            
             if httpResponse.statusCode == 200 {
                 do {
-                    let tempProduct = try decoder.decode(Product.self, from: data)
-                    // Создаем новый Product с тем же содержимым, но новым UUID
+                    // Сначала декодируем как Dictionary для отладки
+                    if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                        print("Received JSON: \(json)")
+                    }
+                    
+                    struct ProductResponse: Codable {
+                        let product: Product
+                        let analysis: ProductAnalysis
+                    }
+                    
+                    let response = try decoder.decode(ProductResponse.self, from: data)
+                    print("Successfully decoded response")
+                    
                     let product = Product(
-                        barcode: tempProduct.barcode,
-                        brand: tempProduct.brand,
-                        category: tempProduct.category,
-                        country: tempProduct.country,
-                        creator: tempProduct.creator,
-                        image: tempProduct.image,
-                        image_ingredients: tempProduct.image_ingredients,
-                        image_nutritions: tempProduct.image_nutritions,
-                        ingredients: tempProduct.ingredients
+                        barcode: response.product.barcode,
+                        brand: response.product.brand,
+                        category: response.product.category,
+                        country: response.product.country,
+                        creator: response.product.creator,
+                        image: response.product.image,
+                        image_ingredients: response.product.image_ingredients,
+                        image_nutritions: response.product.image_nutritions,
+                        ingredients: response.product.ingredients,
+                        analysis: response.analysis
                     )
                     
                     await MainActor.run {
@@ -107,18 +123,8 @@ class ProductViewModel: ObservableObject {
                     }
                 } catch {
                     print("Decode error: \(error)")
+                    print("Error details: \(error.localizedDescription)")
                     await setError("Failed to parse product data")
-                }
-            } else if httpResponse.statusCode == 404 {
-                do {
-                    let errorResponse = try decoder.decode([String: String].self, from: data)
-                    if let detail = errorResponse["detail"] {
-                        await setError(detail)
-                    } else {
-                        await setError("Product not found")
-                    }
-                } catch {
-                    await setError("Product not found")
                 }
             } else {
                 await setError("Server error: \(httpResponse.statusCode)")

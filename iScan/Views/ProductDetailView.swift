@@ -36,6 +36,77 @@ struct ProductDetailView: View {
                 // Product Information
                 VStack(alignment: .leading, spacing: 20) {
                     Group {
+                        // Rating Score Section
+                        if let analysis = product.analysis {
+                            SectionView(title: "Product Rating") {
+                                VStack(alignment: .leading, spacing: 12) {
+                                    HStack {
+                                        Text("\(analysis.rating_score)")
+                                            .font(.system(size: 48, weight: .bold))
+                                            .foregroundColor(analysis.ratingColor)
+                                        Text("/100")
+                                            .font(.title2)
+                                            .foregroundColor(.gray)
+                                    }
+                                    
+                                    Text(analysis.rating_description)
+                                        .font(.body)
+                                        .foregroundColor(.secondary)
+                                    
+                                    // Rating Details
+                                    VStack(alignment: .leading, spacing: 8) {
+                                        Text("Rating Details:")
+                                            .font(.headline)
+                                        HStack {
+                                            Text("Nutrition:")
+                                            Spacer()
+                                            Text("\(analysis.rating_details.nutri_score_points)")
+                                                .foregroundColor(.green)
+                                        }
+                                        HStack {
+                                            Text("Additives Bonus:")
+                                            Spacer()
+                                            Text("+\(analysis.rating_details.additives_bonus)")
+                                                .foregroundColor(.green)
+                                        }
+                                        HStack {
+                                            Text("NOVA Bonus:")
+                                            Spacer()
+                                            Text("+\(analysis.rating_details.nova_bonus)")
+                                                .foregroundColor(.green)
+                                        }
+                                        HStack {
+                                            Text("Eco Penalty:")
+                                            Spacer()
+                                            Text("\(analysis.rating_details.eco_penalty)")
+                                                .foregroundColor(.red)
+                                        }
+                                    }
+                                    .font(.subheadline)
+                                }
+                            }
+                            
+                            // Nutrition Section
+                            SectionView(title: "Nutrition Facts") {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    NutritionRow(title: "Energy", value: "\(Int(analysis.energy_kcal)) kcal")
+                                    NutritionRow(title: "Proteins", value: "\(String(format: "%.1f", analysis.proteins))g")
+                                    NutritionRow(title: "Carbohydrates", value: "\(String(format: "%.1f", analysis.carbohydrates))g")
+                                    NutritionRow(title: "Sugars", value: "\(String(format: "%.1f", analysis.sugars))g")
+                                    NutritionRow(title: "Fat", value: "\(String(format: "%.1f", analysis.fat))g")
+                                    NutritionRow(title: "Saturated Fat", value: "\(String(format: "%.1f", analysis.saturated_fat))g")
+                                    NutritionRow(title: "Salt", value: "\(String(format: "%.1f", analysis.salt))g")
+                                }
+                            }
+                            
+                            // Labels Section
+                            if !analysis.labels.isEmpty {
+                                SectionView(title: "Labels") {
+                                    SimpleLabelsView(labels: analysis.labels)
+                                }
+                            }
+                        }
+                        
                         // Basic Info Section
                         SectionView(title: "Basic Information") {
                             InfoRow(title: "Brand", value: product.brand)
@@ -75,6 +146,53 @@ struct ProductDetailView: View {
         }
         .navigationTitle(product.brand)
         .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+struct SimpleLabelsView: View {
+    let labels: [String]
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(Array(labels.enumerated()), id: \.element) { index, label in
+                if index % 2 == 0 {
+                    HStack(spacing: 8) {
+                        LabelBadge(text: label)
+                        if index + 1 < labels.count {
+                            LabelBadge(text: labels[index + 1])
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+struct LabelBadge: View {
+    let text: String
+    
+    var body: some View {
+        Text(text.replacingOccurrences(of: "-", with: " ").capitalized)
+            .font(.caption)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(Color.blue.opacity(0.1))
+            .foregroundColor(.blue)
+            .cornerRadius(16)
+    }
+}
+
+struct NutritionRow: View {
+    let title: String
+    let value: String
+    
+    var body: some View {
+        HStack {
+            Text(title)
+                .foregroundColor(.gray)
+            Spacer()
+            Text(value)
+                .bold()
+        }
     }
 }
 
