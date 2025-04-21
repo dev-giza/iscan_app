@@ -31,22 +31,30 @@ struct ProductRowView: View {
     
     var body: some View {
         HStack {
-            AsyncImage(url: URL(string: product.image)) { image in
-                image
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-            } placeholder: {
-                ProgressView()
-            }
-            .frame(width: 50, height: 50)
+            Circle()
+                .fill(scoreColor)
+                .frame(width: 20, height: 20)
             
             VStack(alignment: .leading) {
-                Text(product.brand)
+                Text(product.product_name)
                     .font(.headline)
-                Text(product.barcode)
+                Text(product.manufacturer)
                     .font(.subheadline)
                     .foregroundColor(.gray)
+                Text(product.barcode)
+                    .font(.caption)
+                    .foregroundColor(.gray)
             }
+        }
+    }
+    
+    var scoreColor: Color {
+        switch product.score {
+        case 0...20: return .red
+        case 21...40: return .orange
+        case 41...60: return .yellow
+        case 61...80: return .green
+        default: return .green
         }
     }
 } 

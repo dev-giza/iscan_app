@@ -18,8 +18,10 @@ class ProductViewModel: ObservableObject {
             }
         }
     }
+    @Published var showPhotoUpload = false
+    @Published var currentBarcode: String?
     
-    private let baseURL = "https://iscan.store/api/v1/products/"
+    private let baseURL = "https://iscan.store"
     private var isProcessingBarcode = false
     private let decoder = JSONDecoder()
     private let encoder = JSONEncoder()
@@ -62,56 +64,91 @@ class ProductViewModel: ObservableObject {
         await MainActor.run {
             self.isLoading = true
             self.error = nil
+            self.currentBarcode = barcode
         }
         
-        guard let url = URL(string: baseURL + barcode) else {
+        guard let url = URL(string: "\(baseURL)/find/\(barcode)") else {
             await setError("Invalid URL")
             isProcessingBarcode = false
             return
         }
         
+        print("Fetching product with URL: \(url)")
+        
         do {
-            var request = URLRequest(url: url)
-            request.timeoutInterval = 10
+            let (data, response) = try await URLSession.shared.data(from: url)
             
-            let (data, response) = try await URLSession.shared.data(for: request)
-            
-            guard let httpResponse = response as? HTTPURLResponse else {
-                await setError("Invalid server response")
-                isProcessingBarcode = false
-                return
+            if let httpResponse = response as? HTTPURLResponse {
+                print("HTTP Status Code: \(httpResponse.statusCode)")
+                print("Response Headers: \(httpResponse.allHeaderFields)")
             }
             
-            print("Server response status code: \(httpResponse.statusCode)")
+            let responseString = String(data: data, encoding: .utf8) ?? "Unable to decode response"
+            print("Raw response data: \(responseString)")
             
-            if httpResponse.statusCode == 200 {
-                do {
-                    // Сначала декодируем как Dictionary для отладки
-                    if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                        print("Received JSON: \(json)")
-                    }
-                    
-                    struct ProductResponse: Codable {
-                        let product: Product
-                        let analysis: ProductAnalysis
-                    }
-                    
-                    let response = try decoder.decode(ProductResponse.self, from: data)
-                    print("Successfully decoded response")
-                    
-                    let product = Product(
-                        barcode: response.product.barcode,
-                        brand: response.product.brand,
-                        category: response.product.category,
-                        country: response.product.country,
-                        creator: response.product.creator,
-                        image: response.product.image,
-                        image_ingredients: response.product.image_ingredients,
-                        image_nutritions: response.product.image_nutritions,
-                        ingredients: response.product.ingredients,
-                        analysis: response.analysis
+            // Try to decode as ProductAnalysis first
+            if let productAnalysis = try? decoder.decode(ProductAnalysis.self, from: data) {
+                print("Successfully decoded as ProductAnalysis")
+                // Convert ProductAnalysis to Product
+                let product = Product(
+                    id: UUID(),
+                    product_name: productAnalysis.name,
+                    barcode: productAnalysis.barcode,
+                    manufacturer: productAnalysis.brand,
+                    allergens: productAnalysis.allergens.joined(separator: ", "),
+                    score: productAnalysis.rating_score,
+                    nutrition: Nutrition(
+                        proteins: productAnalysis.proteins,
+                        fats: productAnalysis.fat,
+                        carbohydrates: productAnalysis.carbohydrates,
+                        calories: productAnalysis.energy_kcal,
+                        kcal: productAnalysis.energy_kcal
+                    ),
+                    extra: Extra(
+                        ingredients: "Ingredients not available",
+                        explanation_score: productAnalysis.rating_description,
+                        harmful_components: [],
+                        recommendedfor: "Based on rating",
+                        frequency: "Moderate",
+                        alternatives: "Look for products with better ratings"
                     )
+                )
+                
+                await MainActor.run {
+                    self.currentProduct = product
+                    if !self.scannedProducts.contains(where: { $0.barcode == product.barcode }) {
+                        self.scannedProducts.insert(product, at: 0)
+                    }
+                    self.isLoading = false
+                    self.error = nil
+                    self.showProductDetail = true
+                    self.showPhotoUpload = false
+                }
+            } else if let product = try? decoder.decode(Product.self, from: data) {
+                print("Successfully decoded as Product")
+                
+                // Check if product data is empty
+                if product.score == 0 && 
+                   product.product_name == "Без названия" && 
+                   product.manufacturer.isEmpty && 
+                   product.allergens.isEmpty &&
+                   product.nutrition.proteins == nil &&
+                   product.nutrition.fats == nil &&
+                   product.nutrition.carbohydrates == nil &&
+                   product.nutrition.calories == nil &&
+                   product.nutrition.kcal == nil &&
+                   product.extra.ingredients.isEmpty &&
+                   product.extra.recommendedfor.isEmpty &&
+                   product.extra.frequency.isEmpty &&
+                   product.extra.alternatives.isEmpty {
                     
+                    await MainActor.run {
+                        self.currentProduct = product
+                        self.isLoading = false
+                        self.showProductDetail = false
+                        self.showPhotoUpload = true
+                    }
+                } else {
                     await MainActor.run {
                         self.currentProduct = product
                         if !self.scannedProducts.contains(where: { $0.barcode == product.barcode }) {
@@ -120,24 +157,53 @@ class ProductViewModel: ObservableObject {
                         self.isLoading = false
                         self.error = nil
                         self.showProductDetail = true
+                        self.showPhotoUpload = false
                     }
-                } catch {
-                    print("Decode error: \(error)")
-                    print("Error details: \(error.localizedDescription)")
-                    await setError("Failed to parse product data")
                 }
             } else {
-                await setError("Server error: \(httpResponse.statusCode)")
+                print("Failed to decode response as either Product or ProductAnalysis")
+                await MainActor.run {
+                    self.isLoading = false
+                    self.showProductDetail = false
+                    self.showPhotoUpload = true
+                }
             }
-        } catch URLError.timedOut {
-            await setError("Connection timed out")
-        } catch URLError.cannotConnectToHost {
-            await setError("Cannot connect to server")
-        } catch URLError.notConnectedToInternet {
-            await setError("No internet connection")
+        } catch let decodingError as DecodingError {
+            print("Decoding error: \(decodingError)")
+            await MainActor.run {
+                switch decodingError {
+                case .dataCorrupted(let context):
+                    self.error = "Invalid data format: \(context.debugDescription)"
+                case .keyNotFound(let key, let context):
+                    self.error = "Missing required field: \(key.stringValue) - \(context.debugDescription)"
+                case .typeMismatch(let type, let context):
+                    self.error = "Type mismatch: expected \(type) - \(context.debugDescription)"
+                case .valueNotFound(let type, let context):
+                    self.error = "Missing value: expected \(type) - \(context.debugDescription)"
+                @unknown default:
+                    self.error = "Unknown decoding error"
+                }
+                self.showPhotoUpload = true
+            }
+        } catch let urlError as URLError {
+            print("URL error: \(urlError)")
+            await MainActor.run {
+                switch urlError.code {
+                case .timedOut:
+                    self.error = "Request timed out"
+                case .notConnectedToInternet:
+                    self.error = "No internet connection"
+                case .networkConnectionLost:
+                    self.error = "Network connection lost"
+                default:
+                    self.error = "Network error: \(urlError.localizedDescription)"
+                }
+            }
         } catch {
-            print("Network error: \(error)")
-            await setError("Network error occurred")
+            print("Unknown error: \(error)")
+            await MainActor.run {
+                self.error = "Failed to fetch product: \(error.localizedDescription)"
+            }
         }
         
         isProcessingBarcode = false
@@ -163,6 +229,7 @@ class ProductViewModel: ObservableObject {
     func startScanning() {
         isScanning = true
         showProductDetail = false
+        showPhotoUpload = false
         error = nil
     }
 } 

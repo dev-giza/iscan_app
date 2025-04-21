@@ -49,46 +49,49 @@ struct ScannerView: View {
                     }
                 }
             }
-            .background(
-                NavigationLink(
-                    destination: Group {
-                        if let product = productViewModel.currentProduct {
-                            ProductDetailView(product: product)
-                                .onDisappear {
-                                    productViewModel.startScanning()
-                                }
+            .navigationBarHidden(true)
+            .sheet(isPresented: $productViewModel.showProductDetail) {
+                if let product = productViewModel.currentProduct {
+                    ProductDetailView(product: product)
+                        .onDisappear {
+                            productViewModel.startScanning()
                         }
-                    },
-                    isActive: $productViewModel.showProductDetail
-                ) { EmptyView() }
-            )
-            .onAppear {
-                productViewModel.startScanning()
-                checkCameraPermission()
-            }
-            .onDisappear {
-                productViewModel.stopScanning()
-                camera.stopSession()
-            }
-            .onChange(of: productViewModel.isScanning) { isScanning in
-                if isScanning {
-                    camera.startSession()
-                } else {
-                    camera.stopSession()
                 }
             }
-            .alert("Camera Permission Required", isPresented: $camera.showPermissionAlert) {
-                Button("Settings", role: .cancel) {
-                    if let url = URL(string: UIApplication.openSettingsURLString) {
-                        UIApplication.shared.open(url)
-                    }
+            .sheet(isPresented: $productViewModel.showPhotoUpload) {
+                if let barcode = productViewModel.currentBarcode {
+                    PhotoUploadView(barcode: barcode)
+                        .onDisappear {
+                            productViewModel.startScanning()
+                        }
                 }
-                Button("Cancel", role: .cancel) {}
-            } message: {
-                Text("iScan needs camera access to scan barcodes. Please grant access in Settings.")
             }
         }
-        .navigationViewStyle(.stack)
+        .onAppear {
+            productViewModel.startScanning()
+            checkCameraPermission()
+        }
+        .onDisappear {
+            productViewModel.stopScanning()
+            camera.stopSession()
+        }
+        .onChange(of: productViewModel.isScanning) { isScanning in
+            if isScanning {
+                camera.startSession()
+            } else {
+                camera.stopSession()
+            }
+        }
+        .alert("Camera Permission Required", isPresented: $camera.showPermissionAlert) {
+            Button("Settings", role: .cancel) {
+                if let url = URL(string: UIApplication.openSettingsURLString) {
+                    UIApplication.shared.open(url)
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("iScan needs camera access to scan barcodes. Please grant access in Settings.")
+        }
     }
     
     private func checkCameraPermission() {
@@ -171,11 +174,20 @@ class CameraController: NSObject, ObservableObject {
                 return
             }
             
+            if videoCaptureDevice.isFocusModeSupported(.continuousAutoFocus) {
+                try videoCaptureDevice.lockForConfiguration()
+                videoCaptureDevice.focusMode = .continuousAutoFocus
+                videoCaptureDevice.unlockForConfiguration()
+            }
+            
             let metadataOutput = AVCaptureMetadataOutput()
             if captureSession.canAddOutput(metadataOutput) {
                 captureSession.addOutput(metadataOutput)
                 metadataOutput.setMetadataObjectsDelegate(self, queue: DispatchQueue.main)
-                metadataOutput.metadataObjectTypes = [.ean8, .ean13, .pdf417, .qr]
+                metadataOutput.metadataObjectTypes = [
+                    .ean8, .ean13, .upce, .code39, .code39Mod43, .code93, .code128,
+                    .pdf417, .qr, .aztec, .interleaved2of5, .itf14, .dataMatrix
+                ]
             } else {
                 await MainActor.run {
                     setError("Failed to add metadata output")
@@ -234,6 +246,7 @@ extension CameraController: AVCaptureMetadataOutputObjectsDelegate {
         if let metadataObject = metadataObjects.first,
            let readableObject = metadataObject as? AVMetadataMachineReadableCodeObject,
            let stringValue = readableObject.stringValue {
+            print("Scanned barcode: \(stringValue)")
             onCodeScanned?(stringValue)
         }
     }
