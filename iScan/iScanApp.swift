@@ -16,12 +16,12 @@ struct iScanApp: App {
             TabView {
                 ScannerView()
                     .tabItem {
-                        Label("Scan", systemImage: "barcode.viewfinder")
+                        Label("Сканер", systemImage: "barcode.viewfinder")
                     }
                 
                 HistoryView()
                     .tabItem {
-                        Label("History", systemImage: "clock.fill")
+                        Label("История", systemImage: "clock.fill")
                     }
             }
             .environmentObject(productViewModel)

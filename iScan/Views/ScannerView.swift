@@ -6,6 +6,8 @@ struct ScannerView: View {
     @EnvironmentObject var productViewModel: ProductViewModel
     @State private var showAlert = false
     @State private var errorMessage: String?
+    @State private var isFlashlightOn = false
+    @State private var isViewActive = false
     
     var body: some View {
         NavigationView {
@@ -15,6 +17,22 @@ struct ScannerView: View {
                         .ignoresSafeArea()
                     
                     VStack {
+                        HStack {
+                            Spacer()
+                            Button(action: {
+                                toggleFlashlight()
+                            }) {
+                                Image(systemName: isFlashlightOn ? "flashlight.on.fill" : "flashlight.off.fill")
+                                    .font(.system(size: 24))
+                                    .foregroundColor(.white)
+                                    .padding(12)
+                                    .background(Color.black.opacity(0.3))
+                                    .clipShape(Circle())
+                            }
+                            .padding(.trailing, 20)
+                            .padding(.top, 20)
+                        }
+                        
                         Spacer()
                         
                         RoundedRectangle(cornerRadius: 20)
@@ -36,7 +54,7 @@ struct ScannerView: View {
                         if camera.isInitializing {
                             ProgressView()
                                 .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                            Text("Initializing camera...")
+                            Text("Инициализация камеры...")
                                 .foregroundColor(.white)
                                 .padding()
                         }
@@ -49,12 +67,17 @@ struct ScannerView: View {
                     }
                 }
             }
+            .navigationBarTitle("", displayMode: .inline)
             .navigationBarHidden(true)
             .sheet(isPresented: $productViewModel.showProductDetail) {
                 if let product = productViewModel.currentProduct {
                     ProductDetailView(product: product)
                         .onDisappear {
                             productViewModel.startScanning()
+                            camera.isScanningEnabled = true
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                                camera.startSession()
+                            }
                         }
                 }
             }
@@ -63,34 +86,49 @@ struct ScannerView: View {
                     PhotoUploadView(barcode: barcode)
                         .onDisappear {
                             productViewModel.startScanning()
+                            camera.isScanningEnabled = true
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                                camera.startSession()
+                            }
                         }
                 }
             }
         }
+        .navigationViewStyle(.stack)
         .onAppear {
+            isViewActive = true
             productViewModel.startScanning()
+            camera.isScanningEnabled = true
             checkCameraPermission()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                camera.startSession()
+            }
         }
         .onDisappear {
+            isViewActive = false
             productViewModel.stopScanning()
+            camera.isScanningEnabled = false
             camera.stopSession()
+            turnOffFlashlight()
         }
         .onChange(of: productViewModel.isScanning) { isScanning in
             if isScanning {
-                camera.startSession()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    camera.startSession()
+                }
             } else {
                 camera.stopSession()
             }
         }
-        .alert("Camera Permission Required", isPresented: $camera.showPermissionAlert) {
-            Button("Settings", role: .cancel) {
+        .alert("Требуется доступ к камере", isPresented: $camera.showPermissionAlert) {
+            Button("Настройки", role: .cancel) {
                 if let url = URL(string: UIApplication.openSettingsURLString) {
                     UIApplication.shared.open(url)
                 }
             }
-            Button("Cancel", role: .cancel) {}
+            Button("Отмена", role: .cancel) {}
         } message: {
-            Text("iScan needs camera access to scan barcodes. Please grant access in Settings.")
+            Text("iScan требуется доступ к камере для сканирования штрих-кодов. Пожалуйста, предоставьте доступ в Настройках.")
         }
     }
     
@@ -98,9 +136,8 @@ struct ScannerView: View {
         Task {
             switch AVCaptureDevice.authorizationStatus(for: .video) {
             case .authorized:
-                await camera.setupCaptureSession()
                 camera.onCodeScanned = { barcode in
-                    guard productViewModel.isScanning else { return }
+                    guard productViewModel.isScanning && camera.isScanningEnabled else { return }
                     Task {
                         await productViewModel.fetchProduct(barcode: barcode)
                     }
@@ -108,9 +145,8 @@ struct ScannerView: View {
             case .notDetermined:
                 let granted = await AVCaptureDevice.requestAccess(for: .video)
                 if granted {
-                    await camera.setupCaptureSession()
                     camera.onCodeScanned = { barcode in
-                        guard productViewModel.isScanning else { return }
+                        guard productViewModel.isScanning && camera.isScanningEnabled else { return }
                         Task {
                             await productViewModel.fetchProduct(barcode: barcode)
                         }
@@ -125,6 +161,60 @@ struct ScannerView: View {
             }
         }
     }
+    
+    private func toggleFlashlight() {
+        guard let device = AVCaptureDevice.default(for: .video) else { return }
+        
+        if device.hasTorch {
+            do {
+                try device.lockForConfiguration()
+                if device.torchMode == .on {
+                    device.torchMode = .off
+                    isFlashlightOn = false
+                } else {
+                    try device.setTorchModeOn(level: 1.0)
+                    isFlashlightOn = true
+                }
+                device.unlockForConfiguration()
+            } catch {
+                print("Flashlight could not be used")
+            }
+        }
+    }
+    
+    private func turnOffFlashlight() {
+        guard let device = AVCaptureDevice.default(for: .video) else { return }
+        
+        if device.hasTorch {
+            do {
+                try device.lockForConfiguration()
+                device.torchMode = .off
+                isFlashlightOn = false
+                device.unlockForConfiguration()
+            } catch {
+                print("Flashlight could not be turned off")
+            }
+        }
+    }
+}
+
+struct CameraPreview: UIViewRepresentable {
+    let camera: CameraController
+    
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView(frame: UIScreen.main.bounds)
+        
+        if let captureSession = camera.session {
+            let previewLayer = AVCaptureVideoPreviewLayer(session: captureSession)
+            previewLayer.frame = view.layer.bounds
+            previewLayer.videoGravity = .resizeAspectFill
+            view.layer.addSublayer(previewLayer)
+        }
+        
+        return view
+    }
+    
+    func updateUIView(_ uiView: UIView, context: Context) {}
 }
 
 class CameraController: NSObject, ObservableObject {
@@ -132,6 +222,7 @@ class CameraController: NSObject, ObservableObject {
     @Published var isSessionReady = false
     @Published var isInitializing = false
     @Published var error: String?
+    @Published var isScanningEnabled = false
     
     private var captureSession: AVCaptureSession?
     private var previewLayer: AVCaptureVideoPreviewLayer?
@@ -143,41 +234,28 @@ class CameraController: NSObject, ObservableObject {
     
     override init() {
         super.init()
+        setupCaptureSession()
     }
     
-    func setupCaptureSession() async {
-        await MainActor.run {
-            isInitializing = true
-            error = nil
-        }
-        
-        guard let videoCaptureDevice = AVCaptureDevice.default(for: .video) else {
-            await MainActor.run {
-                setError("Failed to access camera device")
-                isInitializing = false
-            }
-            return
-        }
+    private func setupCaptureSession() {
+        isInitializing = true
+        error = nil
         
         let captureSession = AVCaptureSession()
         captureSession.beginConfiguration()
+        
+        guard let videoCaptureDevice = AVCaptureDevice.default(for: .video) else {
+            setError("Не удалось получить доступ к камере")
+            return
+        }
         
         do {
             let input = try AVCaptureDeviceInput(device: videoCaptureDevice)
             if captureSession.canAddInput(input) {
                 captureSession.addInput(input)
             } else {
-                await MainActor.run {
-                    setError("Failed to add camera input")
-                    isInitializing = false
-                }
+                setError("Не удалось добавить вход камеры")
                 return
-            }
-            
-            if videoCaptureDevice.isFocusModeSupported(.continuousAutoFocus) {
-                try videoCaptureDevice.lockForConfiguration()
-                videoCaptureDevice.focusMode = .continuousAutoFocus
-                videoCaptureDevice.unlockForConfiguration()
             }
             
             let metadataOutput = AVCaptureMetadataOutput()
@@ -189,31 +267,24 @@ class CameraController: NSObject, ObservableObject {
                     .pdf417, .qr, .aztec, .interleaved2of5, .itf14, .dataMatrix
                 ]
             } else {
-                await MainActor.run {
-                    setError("Failed to add metadata output")
-                    isInitializing = false
-                }
+                setError("Не удалось добавить выход метаданных")
                 return
             }
             
             captureSession.commitConfiguration()
             self.captureSession = captureSession
-            
-            startSession()
+            isInitializing = false
         } catch {
-            await MainActor.run {
-                setError("Failed to initialize camera: \(error.localizedDescription)")
-                isInitializing = false
-            }
+            setError("Ошибка инициализации камеры: \(error.localizedDescription)")
         }
     }
     
     func startSession() {
         guard let captureSession = captureSession, !captureSession.isRunning else { return }
         
-        Task.detached {
+        DispatchQueue.global(qos: .userInitiated).async {
             captureSession.startRunning()
-            await MainActor.run {
+            DispatchQueue.main.async {
                 self.isSessionReady = true
                 self.isInitializing = false
                 self.error = nil
@@ -224,9 +295,9 @@ class CameraController: NSObject, ObservableObject {
     func stopSession() {
         guard let captureSession = captureSession, captureSession.isRunning else { return }
         
-        Task.detached {
+        DispatchQueue.global(qos: .userInitiated).async {
             captureSession.stopRunning()
-            await MainActor.run {
+            DispatchQueue.main.async {
                 self.isSessionReady = false
             }
         }
@@ -250,23 +321,4 @@ extension CameraController: AVCaptureMetadataOutputObjectsDelegate {
             onCodeScanned?(stringValue)
         }
     }
-}
-
-struct CameraPreview: UIViewRepresentable {
-    let camera: CameraController
-    
-    func makeUIView(context: Context) -> UIView {
-        let view = UIView(frame: UIScreen.main.bounds)
-        
-        if let captureSession = camera.session {
-            let previewLayer = AVCaptureVideoPreviewLayer(session: captureSession)
-            previewLayer.frame = view.layer.bounds
-            previewLayer.videoGravity = .resizeAspectFill
-            view.layer.addSublayer(previewLayer)
-        }
-        
-        return view
-    }
-    
-    func updateUIView(_ uiView: UIView, context: Context) {}
 } 
