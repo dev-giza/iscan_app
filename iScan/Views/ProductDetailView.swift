@@ -64,9 +64,13 @@ struct ProductDetailView: View {
                 Group {
                     switch selectedTab {
                     case 0:
-                        ProductTab(product: product, ingredientsImage: ingredientsImage, nutrition: product.nutrition, extra: product.extra)
+                        LazyVStack {
+                            ProductTab(product: product, ingredientsImage: ingredientsImage, nutrition: product.nutrition, extra: product.extra)
+                        }
                     case 1:
-                        DetailsTab(product: product, extra: product.extra, ingredientsImage: ingredientsImage)
+                        LazyVStack {
+                            DetailsTab(product: product, extra: product.extra, ingredientsImage: ingredientsImage)
+                        }
                     default:
                         EmptyView()
                     }
