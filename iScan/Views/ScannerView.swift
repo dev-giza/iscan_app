@@ -66,6 +66,20 @@ struct ScannerView: View {
                         }
                     }
                 }
+                
+                // Loading overlay
+                if productViewModel.isLoading {
+                    Color.black.opacity(0.5)
+                        .ignoresSafeArea()
+                    VStack {
+                        ProgressView()
+                            .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                            .scaleEffect(1.5)
+                        Text("Загрузка данных продукта...")
+                            .foregroundColor(.white)
+                            .padding(.top, 8)
+                    }
+                }
             }
             .navigationBarTitle("", displayMode: .inline)
             .navigationBarHidden(true)
